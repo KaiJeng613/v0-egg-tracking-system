@@ -6,9 +6,10 @@ import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Loader2, Download, FileSpreadsheet } from "lucide-react"
+import { Loader2, Download, FileSpreadsheet, FileText } from "lucide-react"
 import type { Coop, DailyEntry, EggGrade } from "@/lib/types"
 import * as XLSX from "xlsx"
+import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType } from "docx"
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -343,6 +344,110 @@ export function MonthlyReport() {
     XLSX.writeFile(wb, `egg-report-${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}.xlsx`)
   }
 
+  async function exportToWord() {
+    const monthlyTotals = calculateMonthlyTotals()
+    const { gradeTotals, totalBoxes, totalPieces } = calculateMonthlyGradeTotals()
+
+    const headerCellProps = { shading: { fill: "f3f4f6" } }
+
+    // Daily Production Summary table
+    const dailyHeaderRow = new TableRow({
+      children: ["Date", "Total Chickens", "Dead", "Egg Boxes", "Broken Eggs", "Production Rate %"].map(
+        (text) => new TableCell({ ...headerCellProps, children: [new Paragraph({ children: [new TextRun({ text, bold: true })] })] })
+      ),
+    })
+
+    const dailyDataRows = dailyData
+      .filter((day) => day.totals.chickens > 0 || day.totals.eggBoxes > 0)
+      .map(
+        (day) =>
+          new TableRow({
+            children: [
+              format(parseISO(day.date), "dd/MM/yyyy"),
+              day.totals.chickens.toString(),
+              day.totals.dead.toString(),
+              day.totals.eggBoxes.toFixed(2),
+              day.totals.brokenEggs.toString(),
+              `${day.totals.productionRate.toFixed(2)}%`,
+            ].map((text) => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text })] })] })),
+          })
+      )
+
+    const dailyTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [dailyHeaderRow, ...dailyDataRows],
+    })
+
+    // Grade Summary table
+    const gradeHeaderRow = new TableRow({
+      children: ["Grade", "Total Boxes", "Total Pieces", "Percentage %"].map(
+        (text) => new TableCell({ ...headerCellProps, children: [new Paragraph({ children: [new TextRun({ text, bold: true })] })] })
+      ),
+    })
+
+    const gradeDataRows = GRADES.map((grade) => {
+      const data = gradeTotals[grade]
+      const percentage = totalBoxes > 0 ? (data.boxes / totalBoxes * 100).toFixed(2) : "0.00"
+      return new TableRow({
+        children: [grade, data.boxes.toFixed(2), data.pieces.toString(), `${percentage}%`].map(
+          (text) => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text })] })] })
+        ),
+      })
+    })
+
+    const gradeTotalRow = new TableRow({
+      children: ["Total", totalBoxes.toFixed(2), totalPieces.toString(), "100.00%"].map(
+        (text) => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text, bold: true })] })] })
+      ),
+    })
+
+    const gradeTable = new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [gradeHeaderRow, ...gradeDataRows, gradeTotalRow],
+    })
+
+    const doc = new Document({
+      sections: [
+        {
+          properties: {},
+          children: [
+            new Paragraph({
+              heading: HeadingLevel.TITLE,
+              children: [new TextRun({ text: `Egg Production Report - ${MONTHS[selectedMonth]} ${selectedYear}` })],
+            }),
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [new TextRun({ text: "Daily Production Summary" })],
+            }),
+            dailyTable,
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [new TextRun({ text: "Monthly Totals" })],
+            }),
+            new Paragraph({ children: [new TextRun({ text: `Avg Chickens: ${monthlyTotals.totalChickens}` })] }),
+            new Paragraph({ children: [new TextRun({ text: `Total Dead: ${monthlyTotals.totalDead}` })] }),
+            new Paragraph({ children: [new TextRun({ text: `Total Egg Boxes: ${monthlyTotals.totalEggBoxes}` })] }),
+            new Paragraph({ children: [new TextRun({ text: `Total Broken Eggs: ${monthlyTotals.totalBrokenEggs}` })] }),
+            new Paragraph({ children: [new TextRun({ text: `Avg Production Rate: ${monthlyTotals.avgProductionRate}%` })] }),
+            new Paragraph({
+              heading: HeadingLevel.HEADING_1,
+              children: [new TextRun({ text: "Grade Summary" })],
+            }),
+            gradeTable,
+          ],
+        },
+      ],
+    })
+
+    const blob = await Packer.toBlob(doc)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `egg-report-${selectedYear}-${String(selectedMonth + 1).padStart(2, "0")}.docx`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const monthlyTotals = calculateMonthlyTotals()
   const { gradeTotals, totalBoxes, totalPieces } = calculateMonthlyGradeTotals()
 
@@ -395,6 +500,10 @@ export function MonthlyReport() {
               <Button variant="outline" onClick={exportToExcel}>
                 <FileSpreadsheet className="mr-2 h-4 w-4" />
                 Export Excel
+              </Button>
+              <Button variant="outline" onClick={exportToWord}>
+                <FileText className="mr-2 h-4 w-4" />
+                Export Word
               </Button>
             </div>
           </div>
