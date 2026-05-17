@@ -385,8 +385,8 @@ export function DailyEntryForm() {
                   <th className="px-3 py-2 text-left font-medium">Chickens</th>
                   <th className="px-3 py-2 text-left font-medium">Dead</th>
                   <th className="px-3 py-2 text-left font-medium">Balance</th>
-                  <th className="px-3 py-2 text-left font-medium">Eggs (Box)</th>
-                  <th className="px-3 py-2 text-left font-medium">Broken (pcs)</th>
+                  <th className="px-3 py-2 text-left font-medium">Egg Per Tray</th>
+                  <th className="px-3 py-2 text-left font-medium">2nd Grade</th>
                   <th className="px-3 py-2 text-left font-medium">Prod. Rate %</th>
                   <th className="px-3 py-2 text-left font-medium">Remarks</th>
                 </tr>
