@@ -10,6 +10,7 @@ import { Loader2, Download, FileSpreadsheet, FileText } from "lucide-react"
 import type { Coop, DailyEntry, EggGrade } from "@/lib/types"
 import * as XLSX from "xlsx"
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, WidthType } from "docx"
+import { ActivityHeatmap } from "@/components/activity-heatmap"
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -516,6 +517,13 @@ export function MonthlyReport() {
         </div>
       ) : (
         <>
+          {/* Activity Heatmap */}
+          <ActivityHeatmap
+            dailyData={dailyData}
+            selectedMonth={selectedMonth}
+            selectedYear={selectedYear}
+          />
+
           {/* Monthly Summary Cards */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
             <Card>

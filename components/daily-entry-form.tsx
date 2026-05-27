@@ -9,8 +9,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { CalendarIcon, Save, Loader2 } from "lucide-react"
-import type { Coop, DailyEntry, EggGrade, GRADE_TYPES } from "@/lib/types"
+import { CalendarIcon, Save, Loader2, WifiOff, RefreshCw } from "lucide-react"
+import type { Coop, DailyEntry, EggGrade } from "@/lib/types"
+import {
+  getCachedCoops,
+  setCachedCoops,
+  getLocalDailyEntries,
+  saveLocalDailyEntry,
+  getLocalEggGrades,
+  saveLocalEggGrade,
+  addToPendingSync,
+  getPendingSyncQueue,
+  clearPendingSyncQueue,
+  getPendingSyncCount,
+  setOfflineMode,
+} from "@/lib/local-storage"
 
 const GRADES = [
   "AAA",
@@ -52,7 +65,10 @@ export function DailyEntryForm() {
   const [gradeEntries, setGradeEntries] = useState<Record<string, GradeEntry>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [isOffline, setIsOffline] = useState(false)
+  const [pendingCount, setPendingCount] = useState(0)
+  const [message, setMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null)
 
   const supabase = createClient()
 
@@ -66,22 +82,42 @@ export function DailyEntryForm() {
     }
   }, [date, coops])
 
-  async function loadCoops() {
-    const { data, error } = await supabase
-      .from("coops")
-      .select("*")
-      .order("display_order")
+  useEffect(() => {
+    setPendingCount(getPendingSyncCount())
+  }, [saving])
 
-    if (error) {
-      console.error("Error loading coops:", error)
-      return
+  async function loadCoops() {
+    try {
+      const { data, error } = await supabase
+        .from("coops")
+        .select("*")
+        .order("display_order")
+
+      if (error) throw error
+
+      setCoops(data || [])
+      setCachedCoops(data || [])
+      setIsOffline(false)
+      setOfflineMode(false)
+
+      // Initialize entries
+      initializeEntries(data || [])
+    } catch (err) {
+      console.error("Supabase unavailable, using local fallback:", err)
+      // Fall back to cached/default coops
+      const cachedCoops = getCachedCoops() as Coop[]
+      setCoops(cachedCoops)
+      setIsOffline(true)
+      setOfflineMode(true)
+      initializeEntries(cachedCoops)
     }
 
-    setCoops(data || [])
-    
-    // Initialize empty entries for all coops
+    setLoading(false)
+  }
+
+  function initializeEntries(coopList: Coop[]) {
     const initialCoopEntries: Record<string, CoopEntry> = {}
-    data?.forEach((coop) => {
+    coopList.forEach((coop) => {
       initialCoopEntries[coop.id] = {
         coop_id: coop.id,
         age: "",
@@ -96,7 +132,6 @@ export function DailyEntryForm() {
     })
     setCoopEntries(initialCoopEntries)
 
-    // Initialize empty entries for all grades
     const initialGradeEntries: Record<string, GradeEntry> = {}
     GRADES.forEach((grade) => {
       initialGradeEntries[grade] = {
@@ -107,21 +142,80 @@ export function DailyEntryForm() {
       }
     })
     setGradeEntries(initialGradeEntries)
-    setLoading(false)
   }
 
   async function loadExistingData() {
     const dateStr = format(date, "yyyy-MM-dd")
 
-    // Load existing daily entries
-    const { data: dailyData } = await supabase
-      .from("daily_entries")
-      .select("*")
-      .eq("entry_date", dateStr)
+    if (isOffline) {
+      loadFromLocalStorage(dateStr)
+      return
+    }
 
-    if (dailyData && dailyData.length > 0) {
+    try {
+      // Load existing daily entries
+      const { data: dailyData, error: dailyError } = await supabase
+        .from("daily_entries")
+        .select("*")
+        .eq("entry_date", dateStr)
+
+      if (dailyError) throw dailyError
+
+      if (dailyData && dailyData.length > 0) {
+        const entries: Record<string, CoopEntry> = { ...coopEntries }
+        dailyData.forEach((entry: DailyEntry) => {
+          entries[entry.coop_id] = {
+            coop_id: entry.coop_id,
+            age: entry.age?.toString() || "",
+            number_of_chickens: entry.number_of_chickens?.toString() || "",
+            dead_chickens: entry.dead_chickens?.toString() || "",
+            balance_stock: entry.balance_stock?.toString() || "",
+            egg_boxes: entry.egg_boxes?.toString() || "",
+            broken_eggs: entry.broken_eggs?.toString() || "",
+            production_rate: entry.production_rate?.toString() || "",
+            remarks: entry.remarks || "",
+          }
+        })
+        setCoopEntries(entries)
+      } else {
+        resetCoopEntries()
+      }
+
+      // Load existing grade entries
+      const { data: gradeData, error: gradeError } = await supabase
+        .from("egg_grades")
+        .select("*")
+        .eq("entry_date", dateStr)
+
+      if (gradeError) throw gradeError
+
+      if (gradeData && gradeData.length > 0) {
+        const entries: Record<string, GradeEntry> = { ...gradeEntries }
+        gradeData.forEach((entry: EggGrade) => {
+          entries[entry.grade] = {
+            grade: entry.grade,
+            boxes: entry.boxes?.toString() || "",
+            pieces: entry.pieces?.toString() || "",
+            percentage: entry.percentage?.toString() || "",
+          }
+        })
+        setGradeEntries(entries)
+      } else {
+        resetGradeEntries()
+      }
+    } catch (err) {
+      console.error("Failed to load from Supabase, falling back to local:", err)
+      setIsOffline(true)
+      setOfflineMode(true)
+      loadFromLocalStorage(dateStr)
+    }
+  }
+
+  function loadFromLocalStorage(dateStr: string) {
+    const localEntries = getLocalDailyEntries(dateStr)
+    if (localEntries.length > 0) {
       const entries: Record<string, CoopEntry> = { ...coopEntries }
-      dailyData.forEach((entry: DailyEntry) => {
+      localEntries.forEach((entry) => {
         entries[entry.coop_id] = {
           coop_id: entry.coop_id,
           age: entry.age?.toString() || "",
@@ -136,33 +230,13 @@ export function DailyEntryForm() {
       })
       setCoopEntries(entries)
     } else {
-      // Reset to empty if no data for this date
-      const emptyEntries: Record<string, CoopEntry> = {}
-      coops.forEach((coop) => {
-        emptyEntries[coop.id] = {
-          coop_id: coop.id,
-          age: "",
-          number_of_chickens: "",
-          dead_chickens: "",
-          balance_stock: "",
-          egg_boxes: "",
-          broken_eggs: "",
-          production_rate: "",
-          remarks: "",
-        }
-      })
-      setCoopEntries(emptyEntries)
+      resetCoopEntries()
     }
 
-    // Load existing grade entries
-    const { data: gradeData } = await supabase
-      .from("egg_grades")
-      .select("*")
-      .eq("entry_date", dateStr)
-
-    if (gradeData && gradeData.length > 0) {
+    const localGrades = getLocalEggGrades(dateStr)
+    if (localGrades.length > 0) {
       const entries: Record<string, GradeEntry> = { ...gradeEntries }
-      gradeData.forEach((entry: EggGrade) => {
+      localGrades.forEach((entry) => {
         entries[entry.grade] = {
           grade: entry.grade,
           boxes: entry.boxes?.toString() || "",
@@ -172,18 +246,39 @@ export function DailyEntryForm() {
       })
       setGradeEntries(entries)
     } else {
-      // Reset to empty if no data for this date
-      const emptyGrades: Record<string, GradeEntry> = {}
-      GRADES.forEach((grade) => {
-        emptyGrades[grade] = {
-          grade,
-          boxes: "",
-          pieces: "",
-          percentage: "",
-        }
-      })
-      setGradeEntries(emptyGrades)
+      resetGradeEntries()
     }
+  }
+
+  function resetCoopEntries() {
+    const emptyEntries: Record<string, CoopEntry> = {}
+    coops.forEach((coop) => {
+      emptyEntries[coop.id] = {
+        coop_id: coop.id,
+        age: "",
+        number_of_chickens: "",
+        dead_chickens: "",
+        balance_stock: "",
+        egg_boxes: "",
+        broken_eggs: "",
+        production_rate: "",
+        remarks: "",
+      }
+    })
+    setCoopEntries(emptyEntries)
+  }
+
+  function resetGradeEntries() {
+    const emptyGrades: Record<string, GradeEntry> = {}
+    GRADES.forEach((grade) => {
+      emptyGrades[grade] = {
+        grade,
+        boxes: "",
+        pieces: "",
+        percentage: "",
+      }
+    })
+    setGradeEntries(emptyGrades)
   }
 
   function updateCoopEntry(coopId: string, field: keyof CoopEntry, value: string) {
@@ -206,7 +301,6 @@ export function DailyEntryForm() {
     }))
   }
 
-  // Calculate totals for coop entries
   function calculateCoopTotals() {
     let totalChickens = 0
     let totalDead = 0
@@ -222,8 +316,8 @@ export function DailyEntryForm() {
       totalBrokenEggs += parseFloat(entry.broken_eggs) || 0
     })
 
-    const avgProductionRate = totalChickens > 0 
-      ? ((totalEggBoxes * 360) / totalChickens * 100).toFixed(2) 
+    const avgProductionRate = totalChickens > 0
+      ? ((totalEggBoxes * 360) / totalChickens * 100).toFixed(2)
       : "0"
 
     return {
@@ -236,7 +330,6 @@ export function DailyEntryForm() {
     }
   }
 
-  // Calculate totals for grade entries
   function calculateGradeTotals() {
     let totalBoxes = 0
     let totalPieces = 0
@@ -258,15 +351,23 @@ export function DailyEntryForm() {
 
     const dateStr = format(date, "yyyy-MM-dd")
 
+    if (isOffline) {
+      // Save to localStorage
+      saveToLocalStorage(dateStr)
+      setMessage({ type: "warning", text: "Saved locally (offline mode). Data will sync when database is available." })
+      setSaving(false)
+      return
+    }
+
     try {
-      // Save coop entries
+      // Try saving to Supabase
       for (const entry of Object.values(coopEntries)) {
-        const hasData = 
-          entry.age || 
-          entry.number_of_chickens || 
-          entry.dead_chickens || 
-          entry.balance_stock || 
-          entry.egg_boxes || 
+        const hasData =
+          entry.age ||
+          entry.number_of_chickens ||
+          entry.dead_chickens ||
+          entry.balance_stock ||
+          entry.egg_boxes ||
           entry.broken_eggs ||
           entry.remarks
 
@@ -294,7 +395,6 @@ export function DailyEntryForm() {
         }
       }
 
-      // Save grade entries
       for (const entry of Object.values(gradeEntries)) {
         const hasData = entry.boxes || entry.pieces || entry.percentage
 
@@ -319,10 +419,111 @@ export function DailyEntryForm() {
 
       setMessage({ type: "success", text: "Data saved successfully!" })
     } catch (error) {
-      console.error("Error saving data:", error)
-      setMessage({ type: "error", text: "Failed to save data. Please try again." })
+      console.error("Supabase save failed, saving locally:", error)
+      // Fall back to local save
+      setIsOffline(true)
+      setOfflineMode(true)
+      saveToLocalStorage(dateStr)
+      setMessage({ type: "warning", text: "Database unavailable. Saved locally — will sync when back online." })
     } finally {
       setSaving(false)
+    }
+  }
+
+  function saveToLocalStorage(dateStr: string) {
+    for (const entry of Object.values(coopEntries)) {
+      const hasData =
+        entry.age ||
+        entry.number_of_chickens ||
+        entry.dead_chickens ||
+        entry.balance_stock ||
+        entry.egg_boxes ||
+        entry.broken_eggs ||
+        entry.remarks
+
+      if (hasData) {
+        const localEntry = {
+          entry_date: dateStr,
+          coop_id: entry.coop_id,
+          age: entry.age ? parseInt(entry.age) : null,
+          number_of_chickens: parseInt(entry.number_of_chickens) || 0,
+          dead_chickens: parseInt(entry.dead_chickens) || 0,
+          balance_stock: parseInt(entry.balance_stock) || 0,
+          egg_boxes: parseFloat(entry.egg_boxes) || 0,
+          broken_eggs: parseInt(entry.broken_eggs) || 0,
+          production_rate: parseFloat(entry.production_rate) || 0,
+          remarks: entry.remarks || null,
+          updated_at: new Date().toISOString(),
+        }
+        saveLocalDailyEntry(localEntry)
+        addToPendingSync({
+          type: "daily_entry",
+          data: localEntry,
+          timestamp: new Date().toISOString(),
+        })
+      }
+    }
+
+    for (const entry of Object.values(gradeEntries)) {
+      const hasData = entry.boxes || entry.pieces || entry.percentage
+
+      if (hasData) {
+        const localGrade = {
+          entry_date: dateStr,
+          grade: entry.grade,
+          boxes: parseFloat(entry.boxes) || 0,
+          pieces: parseInt(entry.pieces) || 0,
+          percentage: parseFloat(entry.percentage) || 0,
+          updated_at: new Date().toISOString(),
+        }
+        saveLocalEggGrade(localGrade)
+        addToPendingSync({
+          type: "egg_grade",
+          data: localGrade,
+          timestamp: new Date().toISOString(),
+        })
+      }
+    }
+
+    setPendingCount(getPendingSyncCount())
+  }
+
+  async function handleSync() {
+    setSyncing(true)
+    setMessage(null)
+
+    const queue = getPendingSyncQueue()
+    if (queue.length === 0) {
+      setMessage({ type: "success", text: "Nothing to sync." })
+      setSyncing(false)
+      return
+    }
+
+    try {
+      for (const item of queue) {
+        if (item.type === "daily_entry") {
+          const { error } = await supabase
+            .from("daily_entries")
+            .upsert(item.data as unknown as Record<string, unknown>, { onConflict: "entry_date,coop_id" })
+          if (error) throw error
+        } else {
+          const { error } = await supabase
+            .from("egg_grades")
+            .upsert(item.data as unknown as Record<string, unknown>, { onConflict: "entry_date,grade" })
+          if (error) throw error
+        }
+      }
+
+      clearPendingSyncQueue()
+      setPendingCount(0)
+      setIsOffline(false)
+      setOfflineMode(false)
+      setMessage({ type: "success", text: `Synced ${queue.length} entries to database!` })
+    } catch (error) {
+      console.error("Sync failed:", error)
+      setMessage({ type: "error", text: "Sync failed — database still unavailable. Try again later." })
+    } finally {
+      setSyncing(false)
     }
   }
 
@@ -339,6 +540,38 @@ export function DailyEntryForm() {
 
   return (
     <div className="space-y-6">
+      {/* Offline Banner */}
+      {isOffline && (
+        <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+          <CardContent className="py-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <WifiOff className="h-4 w-4 text-amber-600" />
+                <span className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                  Offline Mode — Database unavailable. Data is saved locally.
+                </span>
+              </div>
+              {pendingCount > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSync}
+                  disabled={syncing}
+                  className="border-amber-400 text-amber-700 hover:bg-amber-100"
+                >
+                  {syncing ? (
+                    <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-3 w-3" />
+                  )}
+                  Sync {pendingCount} entries
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Date Picker */}
       <Card>
         <CardHeader className="pb-3">
@@ -555,7 +788,9 @@ export function DailyEntryForm() {
           <p
             className={cn(
               "text-sm",
-              message.type === "success" ? "text-green-600" : "text-red-600"
+              message.type === "success" && "text-green-600",
+              message.type === "error" && "text-red-600",
+              message.type === "warning" && "text-amber-600"
             )}
           >
             {message.text}
