@@ -26,13 +26,13 @@ interface ActivityHeatmapProps {
 }
 
 /**
- * Determines the color intensity level (0-4) for a given production value.
- * Level 0 = no data/zero production
+ * Determines the color intensity level (0-4) for a given value.
+ * Level 0 = no data/zero
  * Levels 1-4 = increasing intensity based on proportion to max
  */
-export function getIntensityLevel(eggBoxes: number, maxEggBoxes: number): number {
-  if (maxEggBoxes <= 0 || eggBoxes <= 0) return 0
-  const ratio = eggBoxes / maxEggBoxes
+export function getIntensityLevel(value: number, maxValue: number): number {
+  if (maxValue <= 0 || value <= 0) return 0
+  const ratio = value / maxValue
   if (ratio <= 0.25) return 1
   if (ratio <= 0.5) return 2
   if (ratio <= 0.75) return 3
@@ -40,20 +40,28 @@ export function getIntensityLevel(eggBoxes: number, maxEggBoxes: number): number
 }
 
 /**
- * Returns the Tailwind CSS class for a given intensity level.
+ * Returns the Tailwind CSS class for a given intensity level (green scale).
  */
-export function getColorClass(level: number): string {
+export function getGreenColorClass(level: number): string {
   switch (level) {
-    case 1:
-      return "bg-green-200 dark:bg-green-900"
-    case 2:
-      return "bg-green-400 dark:bg-green-700"
-    case 3:
-      return "bg-green-500 dark:bg-green-500"
-    case 4:
-      return "bg-green-700 dark:bg-green-300"
-    default:
-      return "bg-muted"
+    case 1: return "bg-green-200 dark:bg-green-900"
+    case 2: return "bg-green-400 dark:bg-green-700"
+    case 3: return "bg-green-500 dark:bg-green-500"
+    case 4: return "bg-green-700 dark:bg-green-300"
+    default: return "bg-muted"
+  }
+}
+
+/**
+ * Returns the Tailwind CSS class for a given intensity level (amber/orange scale).
+ */
+export function getAmberColorClass(level: number): string {
+  switch (level) {
+    case 1: return "bg-amber-200 dark:bg-amber-900"
+    case 2: return "bg-amber-400 dark:bg-amber-700"
+    case 3: return "bg-amber-500 dark:bg-amber-500"
+    case 4: return "bg-amber-700 dark:bg-amber-300"
+    default: return "bg-muted"
   }
 }
 
@@ -107,89 +115,155 @@ export function buildHeatmapGrid(
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
-export function ActivityHeatmap({ dailyData, selectedMonth, selectedYear }: ActivityHeatmapProps) {
-  // Calculate max egg box production for the month
-  const maxEggBoxes = dailyData.reduce((max, day) => Math.max(max, day.totals.eggBoxes), 0)
+interface HeatmapGridProps {
+  grid: (DailyData | null)[][]
+  maxValue: number
+  getValue: (data: DailyData) => number
+  getColorClass: (level: number) => string
+  formatTooltip: (data: DailyData) => string
+  emptyTooltip: (dateStr: string) => string
+  selectedMonth: number
+  selectedYear: number
+}
 
-  // Build the grid
+function HeatmapGrid({
+  grid,
+  maxValue,
+  getValue,
+  getColorClass,
+  formatTooltip,
+  emptyTooltip,
+  selectedMonth,
+  selectedYear,
+}: HeatmapGridProps) {
+  return (
+    <div className="flex gap-1">
+      {/* Day-of-week labels */}
+      <div className="flex flex-col gap-1 pr-2 pt-0">
+        {DAY_LABELS.map((label, idx) => (
+          <div
+            key={label}
+            className="h-3 w-8 text-[10px] leading-3 text-muted-foreground"
+            style={{ visibility: idx % 2 === 0 ? "visible" : "hidden" }}
+          >
+            {label}
+          </div>
+        ))}
+      </div>
+
+      {/* Grid columns (weeks) */}
+      {grid.map((week, weekIdx) => (
+        <div key={weekIdx} className="flex flex-col gap-1">
+          {week.map((cell, dayIdx) => {
+            if (cell === null) {
+              const cellIndex = weekIdx * 7 + dayIdx
+              const firstDay = startOfMonth(new Date(selectedYear, selectedMonth))
+              const firstDayOfWeek = (getDay(firstDay) + 6) % 7
+              const dayOfMonth = cellIndex - firstDayOfWeek + 1
+              const daysInMonth = getDaysInMonth(new Date(selectedYear, selectedMonth))
+
+              if (dayOfMonth < 1 || dayOfMonth > daysInMonth) {
+                return <div key={dayIdx} className="h-3 w-3 rounded-sm" />
+              }
+
+              const dateStr = format(new Date(selectedYear, selectedMonth, dayOfMonth), "yyyy-MM-dd")
+              return (
+                <div
+                  key={dayIdx}
+                  className="h-3 w-3 rounded-sm bg-muted"
+                  title={emptyTooltip(dateStr)}
+                />
+              )
+            }
+
+            const value = getValue(cell)
+            const level = getIntensityLevel(value, maxValue)
+            const colorClass = getColorClass(level)
+            const tooltip = value > 0
+              ? formatTooltip(cell)
+              : emptyTooltip(cell.date)
+
+            return (
+              <div
+                key={dayIdx}
+                className={`h-3 w-3 rounded-sm ${colorClass}`}
+                title={tooltip}
+              />
+            )
+          })}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export function ActivityHeatmap({ dailyData, selectedMonth, selectedYear }: ActivityHeatmapProps) {
   const grid = buildHeatmapGrid(dailyData, selectedMonth, selectedYear)
+
+  // Max values for each metric
+  const maxEggBoxes = dailyData.reduce((max, day) => Math.max(max, day.totals.eggBoxes), 0)
+  const maxGradeBoxes = dailyData.reduce((max, day) => Math.max(max, day.gradeTotals.boxes), 0)
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-lg">Activity</CardTitle>
+        <CardTitle className="text-lg">Production Activity</CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="flex gap-1">
-          {/* Day-of-week labels */}
-          <div className="flex flex-col gap-1 pr-2 pt-0">
-            {DAY_LABELS.map((label, idx) => (
-              <div
-                key={label}
-                className="h-3 w-8 text-[10px] leading-3 text-muted-foreground"
-                style={{ visibility: idx % 2 === 0 ? "visible" : "hidden" }}
-              >
-                {label}
-              </div>
-            ))}
+      <CardContent className="space-y-4">
+        {/* Egg Boxes (Trays) Heatmap */}
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Egg Trays (Production)</p>
+          <HeatmapGrid
+            grid={grid}
+            maxValue={maxEggBoxes}
+            getValue={(data) => data.totals.eggBoxes}
+            getColorClass={getGreenColorClass}
+            formatTooltip={(data) =>
+              `${format(parseISO(data.date), "EEE, dd MMM yyyy")} — ${data.totals.eggBoxes.toFixed(2)} trays`
+            }
+            emptyTooltip={(dateStr) =>
+              `${format(parseISO(dateStr), "EEE, dd MMM yyyy")} — No production recorded`
+            }
+            selectedMonth={selectedMonth}
+            selectedYear={selectedYear}
+          />
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span>Less</span>
+            <div className="h-3 w-3 rounded-sm bg-muted" />
+            <div className="h-3 w-3 rounded-sm bg-green-200 dark:bg-green-900" />
+            <div className="h-3 w-3 rounded-sm bg-green-400 dark:bg-green-700" />
+            <div className="h-3 w-3 rounded-sm bg-green-500 dark:bg-green-500" />
+            <div className="h-3 w-3 rounded-sm bg-green-700 dark:bg-green-300" />
+            <span>More</span>
           </div>
-
-          {/* Grid columns (weeks) */}
-          {grid.map((week, weekIdx) => (
-            <div key={weekIdx} className="flex flex-col gap-1">
-              {week.map((cell, dayIdx) => {
-                if (cell === null) {
-                  // Check if this is a padding cell (outside the month)
-                  const cellIndex = weekIdx * 7 + dayIdx
-                  const firstDay = startOfMonth(new Date(selectedYear, selectedMonth))
-                  const firstDayOfWeek = (getDay(firstDay) + 6) % 7
-                  const dayOfMonth = cellIndex - firstDayOfWeek + 1
-                  const daysInMonth = getDaysInMonth(new Date(selectedYear, selectedMonth))
-
-                  if (dayOfMonth < 1 || dayOfMonth > daysInMonth) {
-                    // Outside the month — invisible cell
-                    return <div key={dayIdx} className="h-3 w-3 rounded-sm" />
-                  }
-
-                  // Inside the month but no data
-                  const dateStr = format(new Date(selectedYear, selectedMonth, dayOfMonth), "yyyy-MM-dd")
-                  return (
-                    <div
-                      key={dayIdx}
-                      className="h-3 w-3 rounded-sm bg-muted"
-                      title={`${format(parseISO(dateStr), "EEE, dd MMM yyyy")} — No production recorded`}
-                    />
-                  )
-                }
-
-                const level = getIntensityLevel(cell.totals.eggBoxes, maxEggBoxes)
-                const colorClass = getColorClass(level)
-                const tooltip =
-                  cell.totals.eggBoxes > 0
-                    ? `${format(parseISO(cell.date), "EEE, dd MMM yyyy")} — ${cell.totals.eggBoxes.toFixed(2)} egg boxes`
-                    : `${format(parseISO(cell.date), "EEE, dd MMM yyyy")} — No production recorded`
-
-                return (
-                  <div
-                    key={dayIdx}
-                    className={`h-3 w-3 rounded-sm ${colorClass}`}
-                    title={tooltip}
-                  />
-                )
-              })}
-            </div>
-          ))}
         </div>
 
-        {/* Legend */}
-        <div className="mt-3 flex items-center gap-1 text-[10px] text-muted-foreground">
-          <span>Less</span>
-          <div className="h-3 w-3 rounded-sm bg-muted" />
-          <div className="h-3 w-3 rounded-sm bg-green-200 dark:bg-green-900" />
-          <div className="h-3 w-3 rounded-sm bg-green-400 dark:bg-green-700" />
-          <div className="h-3 w-3 rounded-sm bg-green-500 dark:bg-green-500" />
-          <div className="h-3 w-3 rounded-sm bg-green-700 dark:bg-green-300" />
-          <span>More</span>
+        {/* Grade Boxes Heatmap */}
+        <div>
+          <p className="mb-2 text-xs font-medium text-muted-foreground">Egg Grades (Boxes)</p>
+          <HeatmapGrid
+            grid={grid}
+            maxValue={maxGradeBoxes}
+            getValue={(data) => data.gradeTotals.boxes}
+            getColorClass={getAmberColorClass}
+            formatTooltip={(data) =>
+              `${format(parseISO(data.date), "EEE, dd MMM yyyy")} — ${data.gradeTotals.boxes.toFixed(2)} grade boxes`
+            }
+            emptyTooltip={(dateStr) =>
+              `${format(parseISO(dateStr), "EEE, dd MMM yyyy")} — No grades recorded`
+            }
+            selectedMonth={selectedMonth}
+            selectedYear={selectedYear}
+          />
+          <div className="mt-2 flex items-center gap-1 text-[10px] text-muted-foreground">
+            <span>Less</span>
+            <div className="h-3 w-3 rounded-sm bg-muted" />
+            <div className="h-3 w-3 rounded-sm bg-amber-200 dark:bg-amber-900" />
+            <div className="h-3 w-3 rounded-sm bg-amber-400 dark:bg-amber-700" />
+            <div className="h-3 w-3 rounded-sm bg-amber-500 dark:bg-amber-500" />
+            <div className="h-3 w-3 rounded-sm bg-amber-700 dark:bg-amber-300" />
+            <span>More</span>
+          </div>
         </div>
       </CardContent>
     </Card>
