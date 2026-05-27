@@ -209,7 +209,8 @@ export function ActivityHeatmap({ dailyData, selectedMonth, selectedYear }: Acti
       <CardHeader className="pb-3">
         <CardTitle className="text-lg">Production Activity</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent>
+        <div className="grid gap-6 md:grid-cols-2">
         {/* Egg Boxes (Trays) Heatmap */}
         <div>
           <p className="mb-2 text-xs font-medium text-muted-foreground">Egg Trays (Production)</p>
@@ -264,6 +265,7 @@ export function ActivityHeatmap({ dailyData, selectedMonth, selectedYear }: Acti
             <div className="h-3 w-3 rounded-sm bg-amber-700 dark:bg-amber-300" />
             <span>More</span>
           </div>
+        </div>
         </div>
       </CardContent>
     </Card>
