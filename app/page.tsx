@@ -5,7 +5,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { DailyEntryForm } from "@/components/daily-entry-form"
 import { MonthlyReport } from "@/components/monthly-report"
 import { YearlyReport } from "@/components/yearly-report"
-import { Egg, ClipboardList, BarChart3, Calendar } from "lucide-react"
+import { Egg, ClipboardList, BarChart3, Calendar, AlertCircle } from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 export default function EggTracker() {
   const [activeTab, setActiveTab] = useState("daily")
@@ -29,6 +30,23 @@ export default function EggTracker() {
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-6">
+        {/* Migration Notice */}
+        <Alert className="mb-6 border-blue-200 bg-blue-50 dark:border-blue-900 dark:bg-blue-950">
+          <AlertCircle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <AlertTitle className="text-blue-900 dark:text-blue-100">Site Migrated</AlertTitle>
+          <AlertDescription className="text-blue-800 dark:text-blue-200">
+            This site has been migrated to a new location.{" "}
+            <a 
+              href="https://egg-reports.lovable.app/" 
+              className="font-medium underline underline-offset-4 hover:text-blue-600 dark:hover:text-blue-300"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Visit the new site here
+            </a>
+          </AlertDescription>
+        </Alert>
+
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList className="grid w-full max-w-xl grid-cols-3">
             <TabsTrigger value="daily" className="gap-2">
